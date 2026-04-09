@@ -113,15 +113,20 @@ app.get("/tournois", async (req, res) => {
       timeout: 30000,
     });
 
-    // Wait for Drupal form tokens to be present
-    await page.waitForSelector('input[name="form_build_id"]', { timeout: 10000 });
+    // Wait a bit for JS to render the page
+    await page.waitForTimeout(3000);
 
     // Extract tokens + submit form from within browser context
     const result = await page.evaluate(async ({ clubId, clubNom }) => {
       // Get Drupal tokens from the page
       const buildIdEl = document.querySelector('input[name="form_build_id"]');
       const tokenEl = document.querySelector('input[name="form_token"]');
-      if (!buildIdEl || !tokenEl) return { error: true, message: "Tokens Drupal introuvables", html: document.body.innerHTML.slice(0, 500) };
+      if (!buildIdEl || !tokenEl) return {
+        error: true,
+        message: "Tokens Drupal introuvables",
+        html: document.body.innerHTML.slice(0, 800),
+        inputs: Array.from(document.querySelectorAll('input[type="hidden"]')).map(el => ({ name: el.name, value: el.value.slice(0, 30) })),
+      };
 
       const formBuildId = buildIdEl.value;
       const formToken = tokenEl.value;
