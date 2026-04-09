@@ -120,16 +120,14 @@ app.get("/tournois", async (req, res) => {
     const result = await page.evaluate(async ({ clubId, clubNom }) => {
       // Get Drupal tokens from the page
       const buildIdEl = document.querySelector('input[name="form_build_id"]');
-      const tokenEl = document.querySelector('input[name="form_token"]');
-      if (!buildIdEl || !tokenEl) return {
+      if (!buildIdEl) return {
         error: true,
-        message: "Tokens Drupal introuvables",
-        html: document.body.innerHTML.slice(0, 800),
+        message: "form_build_id introuvable",
         inputs: Array.from(document.querySelectorAll('input[type="hidden"]')).map(el => ({ name: el.name, value: el.value.slice(0, 30) })),
       };
 
       const formBuildId = buildIdEl.value;
-      const formToken = tokenEl.value;
+      const formToken = document.querySelector('input[name="form_token"]')?.value ?? "";
 
       // Build dates
       const pad = (n) => String(n).padStart(2, "0");
