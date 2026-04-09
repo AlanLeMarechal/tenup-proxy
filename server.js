@@ -7,6 +7,9 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.PROXY_API_KEY || null;
 
+// ─── GET /health ────────────────────────────────────────────────────────────
+app.get("/health", (req, res) => res.json({ ok: true }));
+
 // Simple auth middleware
 app.use((req, res, next) => {
   if (!API_KEY) return next();
@@ -26,9 +29,6 @@ async function getBrowser() {
   });
   return browser;
 }
-
-// ─── GET /health ────────────────────────────────────────────────────────────
-app.get("/health", (req, res) => res.json({ ok: true }));
 
 // ─── GET /autocomplete?term=... ──────────────────────────────────────────────
 app.get("/autocomplete", async (req, res) => {
