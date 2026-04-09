@@ -109,16 +109,19 @@ app.get("/tournois", async (req, res) => {
 
     // Navigate to establish Datadome session + extract Drupal tokens
     await page.goto("https://tenup.fft.fr/recherche/tournois", {
-      waitUntil: "domcontentloaded",
-      timeout: 25000,
+      waitUntil: "networkidle",
+      timeout: 30000,
     });
+
+    // Wait for Drupal form tokens to be present
+    await page.waitForSelector('input[name="form_build_id"]', { timeout: 10000 });
 
     // Extract tokens + submit form from within browser context
     const result = await page.evaluate(async ({ clubId, clubNom }) => {
       // Get Drupal tokens from the page
       const buildIdEl = document.querySelector('input[name="form_build_id"]');
       const tokenEl = document.querySelector('input[name="form_token"]');
-      if (!buildIdEl || !tokenEl) return { error: true, message: "Tokens Drupal introuvables" };
+      if (!buildIdEl || !tokenEl) return { error: true, message: "Tokens Drupal introuvables", html: document.body.innerHTML.slice(0, 500) };
 
       const formBuildId = buildIdEl.value;
       const formToken = tokenEl.value;
