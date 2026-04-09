@@ -1,8 +1,5 @@
 const express = require("express");
-const { chromium } = require("playwright-extra");
-const StealthPlugin = require("puppeteer-extra-plugin-stealth");
-
-chromium.use(StealthPlugin());
+const { chromium } = require("playwright");
 
 const app = express();
 app.use(express.json());
