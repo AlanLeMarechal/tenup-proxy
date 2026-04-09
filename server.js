@@ -58,45 +58,33 @@ app.get("/autocomplete", async (req, res) => {
   try {
     const b = await getBrowser();
     context = await b.newContext({
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       locale: "fr-FR",
       extraHTTPHeaders: { "Accept-Language": "fr-FR,fr;q=0.9" },
     });
     page = await context.newPage();
 
-    // Intercept the autocomplete AJAX response
-    let captured = null;
-    page.on("response", async (response) => {
-      const url = response.url();
-      if (url.includes("/recherche/autocomplete/clubs/")) {
-        try {
-          captured = await response.json();
-        } catch {}
-      }
-    });
-
+    // Navigate to TenUp to establish a valid Datadome session
     await page.goto("https://tenup.fft.fr/recherche/tournois", {
       waitUntil: "domcontentloaded",
-      timeout: 20000,
+      timeout: 25000,
     });
 
-    // Type in the club field to trigger autocomplete
-    const clubInput = await page.locator('input[data-drupal-selector="edit-club-autocomplete-value-container-label-field"]').first();
-    await clubInput.fill(term);
+    // Make the autocomplete fetch from within the browser context (bypasses Datadome)
+    const data = await page.evaluate(async (term) => {
+      const url = `https://tenup.fft.fr/recherche/autocomplete/clubs/${encodeURIComponent(term)}?term=${encodeURIComponent(term)}`;
+      const res = await fetch(url, {
+        headers: {
+          "Accept": "application/json, text/javascript, */*; q=0.01",
+          "X-Requested-With": "XMLHttpRequest",
+        },
+      });
+      return res.json();
+    }, term);
 
-    // Wait for the AJAX request to fire and be captured (up to 5s)
-    await page.waitForTimeout(2000);
-
-    if (!captured) {
-      // Fallback: try to read suggestions from DOM
-      const items = await page.locator(".ui-autocomplete .ui-menu-item").allTextContents();
-      return res.json(Object.fromEntries(items.map((t, i) => [String(i), t])));
-    }
-
-    return res.json(captured);
+    return res.json(data);
   } catch (err) {
-    console.error("[autocomplete] ERROR:", err);
+    console.error("[autocomplete] ERROR:", err.message);
     return res.status(500).json({ error: true, message: err.message });
   } finally {
     if (page) await page.close().catch(() => {});
@@ -113,70 +101,71 @@ app.get("/tournois", async (req, res) => {
   try {
     const b = await getBrowser();
     context = await b.newContext({
-      userAgent:
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
       locale: "fr-FR",
       extraHTTPHeaders: { "Accept-Language": "fr-FR,fr;q=0.9" },
     });
     page = await context.newPage();
 
-    // Intercept the AJAX search response
-    let captured = null;
-    page.on("response", async (response) => {
-      const url = response.url();
-      if (url.includes("/system/ajax")) {
-        try {
-          const json = await response.json();
-          const cmd = Array.isArray(json)
-            ? json.find((c) => c.command === "recherche_tournois_update")
-            : null;
-          if (cmd) captured = cmd;
-        } catch {}
-      }
-    });
-
+    // Navigate to establish Datadome session + extract Drupal tokens
     await page.goto("https://tenup.fft.fr/recherche/tournois", {
       waitUntil: "domcontentloaded",
-      timeout: 20000,
+      timeout: 25000,
     });
 
-    // Switch to club search mode
-    const clubRadio = page.locator('input[value="club"]');
-    if (await clubRadio.count() > 0) {
-      await clubRadio.click();
-      await page.waitForTimeout(500);
-    }
+    // Extract tokens + submit form from within browser context
+    const result = await page.evaluate(async ({ clubId, clubNom }) => {
+      // Get Drupal tokens from the page
+      const buildIdEl = document.querySelector('input[name="form_build_id"]');
+      const tokenEl = document.querySelector('input[name="form_token"]');
+      if (!buildIdEl || !tokenEl) return { error: true, message: "Tokens Drupal introuvables" };
 
-    // Fill club field
-    const clubInput = page.locator('input[data-drupal-selector="edit-club-autocomplete-value-container-label-field"]').first();
-    await clubInput.fill(clubNom);
-    await page.waitForTimeout(1500);
+      const formBuildId = buildIdEl.value;
+      const formToken = tokenEl.value;
 
-    // Select first autocomplete suggestion if available
-    const firstSuggestion = page.locator(".ui-autocomplete .ui-menu-item").first();
-    if (await firstSuggestion.count() > 0) {
-      await firstSuggestion.click();
-      await page.waitForTimeout(500);
-    }
+      // Build dates
+      const pad = (n) => String(n).padStart(2, "0");
+      const today = new Date();
+      const end = new Date(today);
+      end.setMonth(end.getMonth() + 3);
+      const fmt = (d) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`;
 
-    // Set sport to PADEL
-    const padelOption = page.locator('select[name="pratique"] option[value="PADEL"]');
-    if (await padelOption.count() > 0) {
-      await page.selectOption('select[name="pratique"]', "PADEL");
-    }
+      const body = new URLSearchParams({
+        "recherche_type": "club",
+        "club[autocomplete][value_container][value_field]": clubId || "",
+        "club[autocomplete][value_container][label_field]": clubNom,
+        "pratique": "PADEL",
+        "date[start]": fmt(today),
+        "date[end]": fmt(end),
+        "page": "0",
+        "sort": "_DIST_",
+        "form_build_id": formBuildId,
+        "form_token": formToken,
+        "form_id": "recherche_tournois_form",
+        "_triggering_element_name": "submit_main",
+        "_triggering_element_value": "Rechercher",
+      });
 
-    // Submit
-    const submitBtn = page.locator('input[data-drupal-selector="edit-submit-main"], button[data-drupal-selector="edit-submit-main"]').first();
-    await submitBtn.click();
+      const res = await fetch("https://tenup.fft.fr/system/ajax", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+          "X-Requested-With": "XMLHttpRequest",
+          "Accept": "application/json, text/javascript, */*; q=0.01",
+        },
+        body: body.toString(),
+      });
 
-    // Wait for AJAX response
-    await page.waitForTimeout(4000);
+      return res.json();
+    }, { clubId: clubId || "", clubNom });
 
-    if (!captured) {
-      return res.json({ tournois: [] });
-    }
+    if (result?.error) return res.json({ tournois: [], error: result });
 
-    const items = captured.results?.items ?? [];
+    const ajaxData = Array.isArray(result) ? result : [];
+    const cmd = ajaxData.find((c) => c.command === "recherche_tournois_update");
+    if (!cmd) return res.json({ tournois: [] });
+
+    const items = cmd.results?.items ?? [];
     const tournois = items.map((t) => ({
       id: String(t.id),
       nom: t.libelle ?? "",
@@ -191,6 +180,7 @@ app.get("/tournois", async (req, res) => {
 
     return res.json({ tournois });
   } catch (err) {
+    console.error("[tournois] ERROR:", err.message);
     return res.status(500).json({ error: true, message: err.message });
   } finally {
     if (page) await page.close().catch(() => {});
