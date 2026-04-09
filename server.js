@@ -174,6 +174,7 @@ app.get("/tournois", async (req, res) => {
     const items = cmd.results?.items ?? [];
     const tournois = items.map((t) => ({
       id: String(t.id),
+      code: t.code ?? null,
       nom: t.libelle ?? "",
       dateDebut: t.dateDebut?.date?.split(" ")?.[0] ?? "",
       dateFin: t.dateFin?.date?.split(" ")?.[0] ?? "",
