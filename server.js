@@ -30,6 +30,25 @@ async function getBrowser() {
   return browser;
 }
 
+// ─── GET /test-browser ──────────────────────────────────────────────────────
+app.get("/test-browser", async (req, res) => {
+  try {
+    console.log("[test-browser] launching browser...");
+    const b = await getBrowser();
+    const context = await b.newContext();
+    const page = await context.newPage();
+    await page.goto("https://example.com", { waitUntil: "domcontentloaded", timeout: 15000 });
+    const title = await page.title();
+    await page.close();
+    await context.close();
+    console.log("[test-browser] OK, title:", title);
+    return res.json({ ok: true, title });
+  } catch (err) {
+    console.error("[test-browser] ERROR:", err);
+    return res.status(500).json({ error: true, message: err.message });
+  }
+});
+
 // ─── GET /autocomplete?term=... ──────────────────────────────────────────────
 app.get("/autocomplete", async (req, res) => {
   const { term } = req.query;
@@ -77,6 +96,7 @@ app.get("/autocomplete", async (req, res) => {
 
     return res.json(captured);
   } catch (err) {
+    console.error("[autocomplete] ERROR:", err);
     return res.status(500).json({ error: true, message: err.message });
   } finally {
     if (page) await page.close().catch(() => {});
