@@ -10,6 +10,25 @@ const API_KEY = process.env.PROXY_API_KEY || null;
 // ─── GET /health ────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => res.json({ ok: true }));
 
+// ─── GET /test-browser ──────────────────────────────────────────────────────
+app.get("/test-browser", async (req, res) => {
+  try {
+    console.log("[test-browser] launching browser...");
+    const b = await getBrowser();
+    const context = await b.newContext();
+    const page = await context.newPage();
+    await page.goto("https://example.com", { waitUntil: "domcontentloaded", timeout: 15000 });
+    const title = await page.title();
+    await page.close();
+    await context.close();
+    console.log("[test-browser] OK, title:", title);
+    return res.json({ ok: true, title });
+  } catch (err) {
+    console.error("[test-browser] ERROR:", err);
+    return res.status(500).json({ error: true, message: err.message });
+  }
+});
+
 // Simple auth middleware
 app.use((req, res, next) => {
   if (!API_KEY) return next();
@@ -29,25 +48,6 @@ async function getBrowser() {
   });
   return browser;
 }
-
-// ─── GET /test-browser ──────────────────────────────────────────────────────
-app.get("/test-browser", async (req, res) => {
-  try {
-    console.log("[test-browser] launching browser...");
-    const b = await getBrowser();
-    const context = await b.newContext();
-    const page = await context.newPage();
-    await page.goto("https://example.com", { waitUntil: "domcontentloaded", timeout: 15000 });
-    const title = await page.title();
-    await page.close();
-    await context.close();
-    console.log("[test-browser] OK, title:", title);
-    return res.json({ ok: true, title });
-  } catch (err) {
-    console.error("[test-browser] ERROR:", err);
-    return res.status(500).json({ error: true, message: err.message });
-  }
-});
 
 // ─── GET /autocomplete?term=... ──────────────────────────────────────────────
 app.get("/autocomplete", async (req, res) => {
