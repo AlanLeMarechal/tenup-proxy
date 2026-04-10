@@ -181,7 +181,7 @@ app.get("/tournois", async (req, res) => {
       categorie: t.epreuves?.[0]?.typeEpreuve?.code ?? null,
       epreuve: t.epreuves?.[0]?.natureEpreuve?.libelle ?? null,
       surface: t.naturesTerrains?.[0] ?? null,
-      nomClub: t.installation?.nom ?? null,
+      nomClub: t.nomClub ?? null,
       ville: t.installation?.ville ?? null,
       jugeArbitre: t.jugeArbitre ?? null,
     }));
