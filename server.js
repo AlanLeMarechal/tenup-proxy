@@ -165,6 +165,7 @@ app.get("/tournois", async (req, res) => {
       return res.json();
     }, { clubId: clubId || "", clubNom });
 
+    console.log("[tournois] RAW AJAX RESPONSE:", JSON.stringify(result, null, 2));
     if (result?.error) return res.json({ tournois: [], error: result });
 
     const ajaxData = Array.isArray(result) ? result : [];
