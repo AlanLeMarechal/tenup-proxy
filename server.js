@@ -172,15 +172,12 @@ if (result?.error) return res.json({ tournois: [], error: result });
     if (!cmd) return res.json({ tournois: [] });
 
     const items = cmd.results?.items ?? [];
-    items.slice(0, 3).forEach(t => console.log("[dateDebut raw]", t.libelle, JSON.stringify(t.dateDebut)));
     const tournois = items.map((t) => ({
       id: String(t.id),
       code: t.code ?? null,
       nom: t.libelle ?? "",
-      _rawDateDebut: t.dateDebut,
       dateDebut: t.dateDebut?.date?.split(" ")?.[0] ?? "",
       dateFin: t.dateFin?.date?.split(" ")?.[0] ?? "",
-      startTime: t.dateDebut?.date?.split(" ")?.[1]?.substring(0, 5) ?? null,
       categorie: t.epreuves?.[0]?.typeEpreuve?.code ?? null,
       epreuve: t.epreuves?.[0]?.natureEpreuve?.libelle ?? null,
       surface: t.naturesTerrains?.[0] ?? null,
