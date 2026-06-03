@@ -177,6 +177,7 @@ if (result?.error) return res.json({ tournois: [], error: result });
       id: String(t.id),
       code: t.code ?? null,
       nom: t.libelle ?? "",
+      _rawDateDebut: t.dateDebut,
       dateDebut: t.dateDebut?.date?.split(" ")?.[0] ?? "",
       dateFin: t.dateFin?.date?.split(" ")?.[0] ?? "",
       startTime: t.dateDebut?.date?.split(" ")?.[1]?.substring(0, 5) ?? null,
