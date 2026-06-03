@@ -178,6 +178,7 @@ if (result?.error) return res.json({ tournois: [], error: result });
       nom: t.libelle ?? "",
       dateDebut: t.dateDebut?.date?.split(" ")?.[0] ?? "",
       dateFin: t.dateFin?.date?.split(" ")?.[0] ?? "",
+      startTime: t.dateDebut?.date?.split(" ")?.[1]?.substring(0, 5) ?? null,
       categorie: t.epreuves?.[0]?.typeEpreuve?.code ?? null,
       epreuve: t.epreuves?.[0]?.natureEpreuve?.libelle ?? null,
       surface: t.naturesTerrains?.[0] ?? null,
