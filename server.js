@@ -7,6 +7,28 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.PROXY_API_KEY || null;
 
+// ─── Indisponibilité TenUp (file d'attente Queue-it / surcharge / 504) ───────
+// TenUp place ponctuellement un salon d'attente Queue-it devant le site (pics
+// de trafic). Dans ce cas la navigation redirige vers queue-it.net et n'aboutit
+// jamais → timeout. On renvoie une erreur stable que le back-office mappe sur
+// un message JA du type « Service indisponible pour le moment ».
+function isTenupUnavailable(err) {
+  const m = err?.message || "";
+  return (
+    err?.name === "TimeoutError" ||
+    m.includes("Timeout") ||
+    m.includes("queue-it")
+  );
+}
+
+function serviceUnavailable(res) {
+  return res.status(503).json({
+    error: true,
+    code: "TENUP_UNAVAILABLE",
+    message: "Service indisponible pour le moment",
+  });
+}
+
 // ─── GET /health ────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => res.json({ ok: true }));
 
@@ -70,6 +92,9 @@ app.get("/autocomplete", async (req, res) => {
       timeout: 25000,
     });
 
+    // TenUp en file d'attente Queue-it → service indisponible
+    if (page.url().includes("queue-it.net")) return serviceUnavailable(res);
+
     // Make the autocomplete fetch from within the browser context (bypasses Datadome)
     const data = await page.evaluate(async (term) => {
       const url = `https://tenup.fft.fr/recherche/autocomplete/clubs/${encodeURIComponent(term)}?term=${encodeURIComponent(term)}`;
@@ -85,6 +110,7 @@ app.get("/autocomplete", async (req, res) => {
     return res.json(data);
   } catch (err) {
     console.error("[autocomplete] ERROR:", err.message);
+    if (isTenupUnavailable(err)) return serviceUnavailable(res);
     return res.status(500).json({ error: true, message: err.message });
   } finally {
     if (page) await page.close().catch(() => {});
@@ -112,6 +138,9 @@ app.get("/tournois", async (req, res) => {
       waitUntil: "networkidle",
       timeout: 30000,
     });
+
+    // TenUp en file d'attente Queue-it → service indisponible
+    if (page.url().includes("queue-it.net")) return serviceUnavailable(res);
 
     // Wait a bit for JS to render the page
     await page.waitForTimeout(3000);
@@ -189,6 +218,7 @@ if (result?.error) return res.json({ tournois: [], error: result });
     return res.json({ tournois });
   } catch (err) {
     console.error("[tournois] ERROR:", err.message);
+    if (isTenupUnavailable(err)) return serviceUnavailable(res);
     return res.status(500).json({ error: true, message: err.message });
   } finally {
     if (page) await page.close().catch(() => {});
