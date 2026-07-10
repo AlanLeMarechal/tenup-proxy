@@ -1,15 +1,14 @@
 {
   "name": "tenup-proxy",
-  "version": "1.0.0",
-  "description": "Playwright proxy for TenUp FFT scraping",
+  "version": "2.0.0",
+  "description": "Proxy REST pour l'API publique TenUp FFT",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "playwright": "^1.44.0"
+    "express": "^4.18.2"
   },
   "engines": {
     "node": ">=18"

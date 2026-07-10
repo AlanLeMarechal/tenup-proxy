@@ -1,5 +1,4 @@
 const express = require("express");
-const { chromium } = require("playwright");
 
 const app = express();
 app.use(express.json());
@@ -7,19 +6,22 @@ app.use(express.json());
 const PORT = process.env.PORT || 3000;
 const API_KEY = process.env.PROXY_API_KEY || null;
 
-// ─── Indisponibilité TenUp (file d'attente Queue-it / surcharge / 504) ───────
+const TENUP_API = "https://tenup.fft.fr/back/public/v1";
+const UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+const jsonHeaders = {
+  "User-Agent": UA,
+  "Accept": "application/json",
+  "Accept-Language": "fr-FR,fr;q=0.9",
+};
+
+// ─── Indisponibilité TenUp (file d'attente Queue-it / surcharge / 5xx) ───────
 // TenUp place ponctuellement un salon d'attente Queue-it devant le site (pics
-// de trafic). Dans ce cas la navigation redirige vers queue-it.net et n'aboutit
-// jamais → timeout. On renvoie une erreur stable que le back-office mappe sur
-// un message JA du type « Service indisponible pour le moment ».
-function isTenupUnavailable(err) {
-  const m = err?.message || "";
-  return (
-    err?.name === "TimeoutError" ||
-    m.includes("Timeout") ||
-    m.includes("queue-it")
-  );
-}
+// de trafic). Dans ce cas la requête est redirigée vers queue-it.net et répond
+// du HTML au lieu du JSON attendu. On renvoie une erreur stable que le
+// back-office mappe sur un message JA du type « Service indisponible ».
+class TenupUnavailableError extends Error {}
 
 function serviceUnavailable(res) {
   return res.status(503).json({
@@ -29,27 +31,47 @@ function serviceUnavailable(res) {
   });
 }
 
+function handleError(res, scope, err) {
+  console.error(`[${scope}] ERROR:`, err.message);
+  if (err instanceof TenupUnavailableError) return serviceUnavailable(res);
+  return res.status(500).json({ error: true, message: err.message });
+}
+
+async function tenupFetch(path, init = {}) {
+  let res;
+  try {
+    res = await fetch(`${TENUP_API}${path}`, { ...init, headers: { ...jsonHeaders, ...init.headers } });
+  } catch (err) {
+    throw new TenupUnavailableError(`TenUp injoignable sur ${path} : ${err.message}`);
+  }
+
+  if (res.url.includes("queue-it.net") || res.status >= 500) {
+    throw new TenupUnavailableError(`TenUp indisponible sur ${path} (${res.status})`);
+  }
+  if (!res.ok) throw new Error(`TenUp ${res.status} sur ${path}`);
+
+  // Une réponse HTML signale une redirection vers la file ou une page d'erreur.
+  const type = res.headers.get("content-type") ?? "";
+  if (!type.includes("application/json")) {
+    throw new TenupUnavailableError(`TenUp a répondu ${type || "sans type"} sur ${path}`);
+  }
+  return res.json();
+}
+
+const tenupGet = (path) => tenupFetch(path);
+
+const tenupPost = (path, body) =>
+  tenupFetch(path, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+const searchClubs = (query) =>
+  tenupPost("/clubs/recherche", { query, pratique: "PADEL", from: 0, size: 10 });
+
 // ─── GET /health ────────────────────────────────────────────────────────────
 app.get("/health", (req, res) => res.json({ ok: true }));
-
-// ─── GET /test-browser ──────────────────────────────────────────────────────
-app.get("/test-browser", async (req, res) => {
-  try {
-    console.log("[test-browser] launching browser...");
-    const b = await getBrowser();
-    const context = await b.newContext();
-    const page = await context.newPage();
-    await page.goto("https://example.com", { waitUntil: "domcontentloaded", timeout: 15000 });
-    const title = await page.title();
-    await page.close();
-    await context.close();
-    console.log("[test-browser] OK, title:", title);
-    return res.json({ ok: true, title });
-  } catch (err) {
-    console.error("[test-browser] ERROR:", err);
-    return res.status(500).json({ error: true, message: err.message });
-  }
-});
 
 // Simple auth middleware
 app.use((req, res, next) => {
@@ -59,170 +81,76 @@ app.use((req, res, next) => {
   next();
 });
 
-// Browser singleton — reused across requests
-let browser = null;
-
-async function getBrowser() {
-  if (browser && browser.isConnected()) return browser;
-  browser = await chromium.launch({
-    headless: true,
-    args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-  });
-  return browser;
-}
-
 // ─── GET /autocomplete?term=... ──────────────────────────────────────────────
+// Contrat de sortie conservé : { "<codeClub>": "<nom>" }
 app.get("/autocomplete", async (req, res) => {
   const { term } = req.query;
   if (!term || term.length < 2) return res.json({});
 
-  let context, page;
   try {
-    const b = await getBrowser();
-    context = await b.newContext({
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      locale: "fr-FR",
-      extraHTTPHeaders: { "Accept-Language": "fr-FR,fr;q=0.9" },
-    });
-    page = await context.newPage();
-
-    // Navigate to TenUp to establish a valid Datadome session
-    await page.goto("https://tenup.fft.fr/recherche/tournois", {
-      waitUntil: "domcontentloaded",
-      timeout: 25000,
-    });
-
-    // TenUp en file d'attente Queue-it → service indisponible
-    if (page.url().includes("queue-it.net")) return serviceUnavailable(res);
-
-    // Make the autocomplete fetch from within the browser context (bypasses Datadome)
-    const data = await page.evaluate(async (term) => {
-      const url = `https://tenup.fft.fr/recherche/autocomplete/clubs/${encodeURIComponent(term)}?term=${encodeURIComponent(term)}`;
-      const res = await fetch(url, {
-        headers: {
-          "Accept": "application/json, text/javascript, */*; q=0.01",
-          "X-Requested-With": "XMLHttpRequest",
-        },
-      });
-      return res.json();
-    }, term);
-
-    return res.json(data);
+    const data = await searchClubs(term);
+    const out = {};
+    for (const club of data.clubs ?? []) out[club.code] = club.nom;
+    return res.json(out);
   } catch (err) {
-    console.error("[autocomplete] ERROR:", err.message);
-    if (isTenupUnavailable(err)) return serviceUnavailable(res);
-    return res.status(500).json({ error: true, message: err.message });
-  } finally {
-    if (page) await page.close().catch(() => {});
-    if (context) await context.close().catch(() => {});
+    return handleError(res, "autocomplete", err);
   }
 });
 
 // ─── GET /tournois?clubId=...&clubNom=... ────────────────────────────────────
 app.get("/tournois", async (req, res) => {
   const { clubId, clubNom } = req.query;
-  if (!clubNom) return res.status(400).json({ error: true, message: "clubNom requis" });
+  if (!clubNom && !clubId) return res.status(400).json({ error: true, message: "clubNom ou clubId requis" });
 
-  let context, page;
   try {
-    const b = await getBrowser();
-    context = await b.newContext({
-      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-      locale: "fr-FR",
-      extraHTTPHeaders: { "Accept-Language": "fr-FR,fr;q=0.9" },
-    });
-    page = await context.newPage();
+    // Le code club est la clé d'entrée ; on le résout par le nom si absent.
+    let codeClub = clubId;
+    if (!codeClub) {
+      const search = await searchClubs(clubNom);
+      const match =
+        (search.clubs ?? []).find(
+          (c) => c.nom.trim().toUpperCase() === String(clubNom).trim().toUpperCase()
+        ) ?? (search.clubs ?? [])[0];
+      if (!match) return res.json({ tournois: [] });
+      codeClub = match.code;
+    }
 
-    // Navigate to establish Datadome session + extract Drupal tokens
-    await page.goto("https://tenup.fft.fr/recherche/tournois", {
-      waitUntil: "networkidle",
-      timeout: 30000,
-    });
+    const liste = await tenupGet(`/clubs/${encodeURIComponent(codeClub)}/tournois`);
+    const padel = (liste.tournois ?? []).filter((t) => t.pratique?.code === "PADEL");
 
-    // TenUp en file d'attente Queue-it → service indisponible
-    if (page.url().includes("queue-it.net")) return serviceUnavailable(res);
+    // categorie (P250), ville, nomClub et jugeArbitre ne sont que sur la fiche.
+    const fiches = await Promise.all(
+      padel.map((t) =>
+        tenupGet(`/tournois/${encodeURIComponent(t.id)}/fiche-tournoi`).catch((err) => {
+          console.error(`[tournois] fiche ${t.id} KO:`, err.message);
+          return null;
+        })
+      )
+    );
 
-    // Wait a bit for JS to render the page
-    await page.waitForTimeout(3000);
+    const tournois = padel.map((t, i) => {
+      const fiche = fiches[i];
+      const epreuve = fiche?.epreuves?.[0] ?? null;
+      const ja = fiche?.tournoi?.jugeArbitre ?? null;
 
-    // Extract tokens + submit form from within browser context
-    const result = await page.evaluate(async ({ clubId, clubNom }) => {
-      // Get Drupal tokens from the page
-      const buildIdEl = document.querySelector('input[name="form_build_id"]');
-      if (!buildIdEl) return {
-        error: true,
-        message: "form_build_id introuvable",
-        inputs: Array.from(document.querySelectorAll('input[type="hidden"]')).map(el => ({ name: el.name, value: el.value.slice(0, 30) })),
+      return {
+        id: String(t.id),
+        code: null,
+        nom: t.nom ?? "",
+        dateDebut: t.dateDebut ?? "",
+        dateFin: t.dateFin ?? "",
+        categorie: epreuve?.categorie ?? null,
+        epreuve: t.epreuves?.[0]?.natureEpreuve?.libelle ?? null,
+        surface: null,
+        nomClub: fiche?.tournoi?.club?.nom ?? null,
+        ville: fiche?.tournoi?.ville ?? null,
+        jugeArbitre: ja ? { id: ja.idCrm, nom: ja.nom, prenom: ja.prenom } : null,
       };
-
-      const formBuildId = buildIdEl.value;
-      const formToken = document.querySelector('input[name="form_token"]')?.value ?? "";
-
-      // Build dates
-      const pad = (n) => String(n).padStart(2, "0");
-      const today = new Date();
-      const end = new Date(today);
-      end.setMonth(end.getMonth() + 3);
-      const fmt = (d) => `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${String(d.getFullYear()).slice(2)}`;
-
-      const body = new URLSearchParams({
-        "recherche_type": "club",
-        "club[autocomplete][value_container][value_field]": clubId || "",
-        "club[autocomplete][value_container][label_field]": clubNom,
-        "pratique": "PADEL",
-        "date[start]": fmt(today),
-        "date[end]": fmt(end),
-        "page": "0",
-        "sort": "_DIST_",
-        "form_build_id": formBuildId,
-        "form_token": formToken,
-        "form_id": "recherche_tournois_form",
-        "_triggering_element_name": "submit_main",
-        "_triggering_element_value": "Rechercher",
-      });
-
-      const res = await fetch("https://tenup.fft.fr/system/ajax", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          "X-Requested-With": "XMLHttpRequest",
-          "Accept": "application/json, text/javascript, */*; q=0.01",
-        },
-        body: body.toString(),
-      });
-
-      return res.json();
-    }, { clubId: clubId || "", clubNom });
-
-if (result?.error) return res.json({ tournois: [], error: result });
-
-    const ajaxData = Array.isArray(result) ? result : [];
-    const cmd = ajaxData.find((c) => c.command === "recherche_tournois_update");
-    if (!cmd) return res.json({ tournois: [] });
-
-    const items = cmd.results?.items ?? [];
-    const tournois = items.map((t) => ({
-      id: String(t.id),
-      code: t.code ?? null,
-      nom: t.libelle ?? "",
-      dateDebut: t.dateDebut?.date?.split(" ")?.[0] ?? "",
-      dateFin: t.dateFin?.date?.split(" ")?.[0] ?? "",
-      categorie: t.epreuves?.[0]?.typeEpreuve?.code ?? null,
-      epreuve: t.epreuves?.[0]?.natureEpreuve?.libelle ?? null,
-      surface: t.naturesTerrains?.[0] ?? null,
-      nomClub: t.nomClub ?? null,
-      ville: t.installation?.ville ?? null,
-      jugeArbitre: t.jugeArbitre ?? null,
-    }));
+    });
 
     return res.json({ tournois });
   } catch (err) {
-    console.error("[tournois] ERROR:", err.message);
-    if (isTenupUnavailable(err)) return serviceUnavailable(res);
-    return res.status(500).json({ error: true, message: err.message });
-  } finally {
-    if (page) await page.close().catch(() => {});
-    if (context) await context.close().catch(() => {});
+    return handleError(res, "tournois", err);
   }
 });
 
