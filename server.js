@@ -141,6 +141,7 @@ app.get("/tournois", async (req, res) => {
         dateFin: t.dateFin ?? "",
         categorie: epreuve?.categorie ?? null,
         epreuve: t.epreuves?.[0]?.natureEpreuve?.libelle ?? null,
+        tarif: epreuve?.tarifAdulte ?? null,
         surface: null,
         nomClub: fiche?.tournoi?.club?.nom ?? null,
         ville: fiche?.tournoi?.ville ?? null,
