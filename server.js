@@ -146,6 +146,20 @@ app.get("/tournois", async (req, res) => {
         nomClub: fiche?.tournoi?.club?.nom ?? null,
         ville: fiche?.tournoi?.ville ?? null,
         jugeArbitre: ja ? { id: ja.idCrm, nom: ja.nom, prenom: ja.prenom } : null,
+        // Ajouts additifs du 23/10 : un tournoi PTM = UNE épreuve. Le JA choisit l'épreuve, qui porte
+        // l'homologation (`id`) ; les champs ci-dessus restent ceux de la première, pour les anciens
+        // clients. `id` d'une épreuve = `moja_epr_id` côté PTM.
+        codeClub: String(fiche?.tournoi?.club?.code ?? codeClub ?? "") || null,
+        epreuves: (fiche?.epreuves ?? []).map((e) => ({
+          id: e.id,
+          libelle: e.libelle ?? null,
+          nature: e.nature ?? null,
+          categorie: e.categorie ?? null,
+          dateDebut: e.dateDebut ?? null,
+          dateFin: e.dateFin ?? null,
+          tarif: e.tarifAdulte ?? null,
+          nbPaires: e.nbPairesTabFin ?? null,
+        })),
       };
     });
 
