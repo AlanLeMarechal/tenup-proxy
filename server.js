@@ -97,6 +97,14 @@ app.get("/autocomplete", async (req, res) => {
   }
 });
 
+function joinAdresse(t) {
+  const lignes = [t?.adresse1, t?.adresse2]
+    .map((l) => (typeof l === "string" ? l.trim() : ""))
+    .filter(Boolean);
+  const uniques = [...new Set(lignes)];
+  return uniques.length ? uniques.join(", ") : null;
+}
+
 // ─── GET /tournois?clubId=...&clubNom=... ────────────────────────────────────
 app.get("/tournois", async (req, res) => {
   const { clubId, clubNom } = req.query;
@@ -145,6 +153,12 @@ app.get("/tournois", async (req, res) => {
         surface: null,
         nomClub: fiche?.tournoi?.club?.nom ?? null,
         ville: fiche?.tournoi?.ville ?? null,
+        // Ajouts additifs : adresse du tournoi. adresse1 peut être nul (MOJA_317353 : tout est dans
+        // adresse2) ou identique à adresse2 (MOJA_277921) → on garde les lignes non vides, dédoublonnées.
+        adresse: joinAdresse(fiche?.tournoi),
+        codePostal: fiche?.tournoi?.codePostal ?? null,
+        latitude: fiche?.tournoi?.latitude ?? null,
+        longitude: fiche?.tournoi?.longitude ?? null,
         jugeArbitre: ja ? { id: ja.idCrm, nom: ja.nom, prenom: ja.prenom } : null,
         // Ajouts additifs du 23/10 : un tournoi PTM = UNE épreuve. Le JA choisit l'épreuve, qui porte
         // l'homologation (`id`) ; les champs ci-dessus restent ceux de la première, pour les anciens
